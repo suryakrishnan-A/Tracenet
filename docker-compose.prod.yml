@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL 16 Relational Storage (Internal Network Only, No Host Port Exposure)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: tracenest-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tracenest_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisInProductionSecuredSecret!}
+      POSTGRES_DB: ${POSTGRES_DB:-tracenest}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      - tracenest_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tracenest_app} -d ${POSTGRES_DB:-tracenest}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # TraceNest FastAPI Backend Service
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tracenest-backend-prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tracenest_app}:${POSTGRES_PASSWORD:-ChangeThisInProductionSecuredSecret!}@postgres:5432/${POSTGRES_DB:-tracenest}
+      BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_TELEMETRY_PER_MINUTE: "120"
+      RATE_LIMIT_INVESTIGATE_PER_MINUTE: "15"
+    ports:
+      - "8000:8000"
+    networks:
+      - tracenest_internal
+      - tracenest_public
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # TraceNest Next.js Dashboard Frontend Service
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    container_name: tracenest-frontend-prod
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      - "3000:3000"
+    networks:
+      - tracenest_public
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  # Internal network: Isolated backend & database communication (no external access to postgres)
+  tracenest_internal:
+    driver: bridge
+    internal: true
+  # Public-facing network: Exposes frontend and backend HTTP services
+  tracenest_public:
+    driver: bridge
+
+volumes:
+  postgres_prod_data:
+    driver: local
