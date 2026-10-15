@@ -25,7 +25,8 @@ async def test_api_v1_health_endpoint(async_client: AsyncClient):
     assert data["app_name"] == "TraceNest API"
     assert data["version"] == "0.1.0"
     assert data["api_version"] == "v1"
-    assert data["environment"] == "development"
+    from app.core.config import settings
+    assert data["environment"] == settings.ENVIRONMENT
     assert "database_connected" in data
     assert isinstance(data["database_connected"], bool)
     assert "timestamp" in data
