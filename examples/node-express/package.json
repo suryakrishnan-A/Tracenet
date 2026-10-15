@@ -1,0 +1,12 @@
+{
+  "name": "tracenest-node-example",
+  "version": "1.0.0",
+  "description": "TraceNest Integration Example in Node.js Express",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1"
+  }
+}

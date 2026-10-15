@@ -1,0 +1,169 @@
+name: TraceNest Continuous Integration
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  # ============================================================================
+  # Python SDK Quality Gate: Unit Tests & Syntax Verification
+  # ============================================================================
+  python-sdk-ci:
+    name: Python SDK Tests & Packaging Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SDK & Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx pytest pytest-asyncio
+          pip install -e packages/python
+
+      - name: Run Python SDK Unit Tests
+        run: |
+          pytest packages/python/tests -v
+
+      - name: Validate Python Example Syntax
+        run: |
+          python -m py_compile examples/python-fastapi/app.py
+
+  # ============================================================================
+  # TypeScript SDK Quality Gate: Compilation & Vitest Suite
+  # ============================================================================
+  typescript-sdk-ci:
+    name: TypeScript SDK Compilation & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Tooling Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Compile TypeScript SDK with tsc
+        run: |
+          npx --prefix frontend tsc -p packages/typescript/tsconfig.json
+
+      - name: Run TypeScript SDK Tests
+        run: |
+          npx --prefix frontend vitest run packages/typescript/tests/client.test.ts
+
+      - name: Validate Node.js Example Syntax
+        run: |
+          node --check examples/node-express/server.js
+
+  # ============================================================================
+  # Backend Quality Gate: Pytest Suite, Linting, & Async Database Migrations
+  # ============================================================================
+  backend-ci:
+    name: Backend Tests & Reliability Gate
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tracenest_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies & local SDK
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+          pip install -e packages/python
+
+      - name: Run Alembic Database Migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest_test
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest_test
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: Execute Full Pytest Suite (Backend & SDK Integration)
+        env:
+          ENVIRONMENT: test
+          DEBUG: "true"
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest_test
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest_test
+          AI_PROVIDER: mock
+          RATE_LIMIT_ENABLED: "false"
+        run: |
+          cd backend
+          pytest -v --cov=app
+
+  # ============================================================================
+  # Frontend Quality Gate: Vitest Suite & Production Standalone Build
+  # ============================================================================
+  frontend-ci:
+    name: Frontend Tests & Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Vitest Unit & Component Tests
+        run: |
+          cd frontend
+          npm test
+
+      - name: Build Next.js Production Bundle
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_ENV: production
+          NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8000"
+        run: |
+          cd frontend
+          npm run build

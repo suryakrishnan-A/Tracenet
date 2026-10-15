@@ -1,0 +1,29 @@
+{
+  "name": "@tracenest/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript & Node.js SDK for TraceNest AI-Powered Incident Investigation Platform",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "tracenest",
+    "observability",
+    "telemetry",
+    "incident-investigation",
+    "apm",
+    "monitoring"
+  ],
+  "author": "TraceNest Engineering <engineering@tracenest.dev>",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
