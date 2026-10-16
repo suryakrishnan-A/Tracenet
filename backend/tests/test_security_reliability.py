@@ -262,3 +262,132 @@ async def test_rate_limiter_multi_worker_partitioning(async_client: AsyncClient)
         settings.WORKERS = original_workers
         settings.RATE_LIMIT_TELEMETRY_PER_MINUTE = original_limit
         rate_limiter.reset()
+
+
+def test_normalize_database_url_cases():
+    """Verify database URL normalization for managed cloud PostgreSQL providers."""
+    from app.core.config import normalize_database_url
+
+    # 1. Standard Neon / Heroku postgres:// format with sslmode=require
+    neon_url = "postgres://tracenest_user:secret_pass@ep-cool-app.neon.tech:5432/tracenest?sslmode=require&channel_binding=disable"
+    norm_neon = normalize_database_url(neon_url)
+    assert norm_neon.startswith("postgresql+asyncpg://tracenest_user:secret_pass@ep-cool-app.neon.tech:5432/tracenest")
+    assert "ssl=require" in norm_neon
+    assert "sslmode" not in norm_neon
+    assert "channel_binding" not in norm_neon
+
+    # 2. Supabase postgresql:// pooler format
+    supabase_url = "postgresql://postgres.project:pass123@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
+    norm_supa = normalize_database_url(supabase_url)
+    assert norm_supa.startswith("postgresql+asyncpg://postgres.project:pass123@aws-0-us-east-1.pooler.supabase.com:6543/postgres")
+    assert "ssl=require" in norm_supa
+
+    # 3. Already asyncpg URL with ssl=true
+    async_url = "postgresql+asyncpg://usr:pwd@dbhost:5432/tracenest?ssl=true"
+    norm_async = normalize_database_url(async_url)
+    assert norm_async == "postgresql+asyncpg://usr:pwd@dbhost:5432/tracenest?ssl=require"
+
+    # 4. Standard local URL with no query params
+    local_url = "postgresql://postgres:postgres@localhost:5432/tracenest"
+    assert normalize_database_url(local_url) == "postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest"
+
+    # 5. sslmode=disable
+    disable_url = "postgres://user:pass@localhost:5432/db?sslmode=disable"
+    assert normalize_database_url(disable_url) == "postgresql+asyncpg://user:pass@localhost:5432/db"
+
+
+def test_cors_origins_validation_and_production_safeguards():
+    """Verify CORS origins parsing, validation, and production safeguards."""
+    from app.core.config import Settings
+
+    # 1. Valid JSON array
+    s1 = Settings(BACKEND_CORS_ORIGINS='["https://app.tracenest.dev", "https://tracenest.vercel.app/"]')
+    assert s1.BACKEND_CORS_ORIGINS == ["https://app.tracenest.dev", "https://tracenest.vercel.app"]
+
+    # 2. Comma-separated string
+    s2 = Settings(BACKEND_CORS_ORIGINS="https://app.tracenest.dev, http://localhost:3000")
+    assert s2.BACKEND_CORS_ORIGINS == ["https://app.tracenest.dev", "http://localhost:3000"]
+
+    # 3. Invalid origin protocol rejected
+    with pytest.raises(ValueError, match="must start with http:// or https://"):
+        Settings(BACKEND_CORS_ORIGINS="ftp://invalid.com")
+
+    # 4. Origin with trailing path rejected
+    with pytest.raises(ValueError, match="cannot contain path"):
+        Settings(BACKEND_CORS_ORIGINS="https://example.com/api")
+
+    # 5. Production rejects wildcard '*' with credentials
+    with pytest.raises(ValueError, match="Wildcard '\\*' origin is prohibited in production"):
+        Settings(
+            ENVIRONMENT="production",
+            POSTGRES_PASSWORD="SuperSecureCustomPassword123!",
+            DATABASE_URL="postgresql+asyncpg://app:SuperSecureCustomPassword123!@remote-host:5432/db",
+            BACKEND_CORS_ORIGINS='["*"]',
+        )
+
+
+def test_production_secret_validation():
+    """Verify production fails fast on insecure default passwords."""
+    from app.core.config import Settings
+
+    # Production rejects default 'postgres' password
+    with pytest.raises(ValueError, match="Insecure default database password detected"):
+        Settings(
+            ENVIRONMENT="production",
+            POSTGRES_PASSWORD="postgres",
+            DATABASE_URL="postgresql+asyncpg://postgres:postgres@remote-host:5432/db",
+            BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+        )
+
+    # Production accepts strong custom password
+    prod_valid = Settings(
+        ENVIRONMENT="production",
+        POSTGRES_PASSWORD="StrongCustomPassword2026!Secure",
+        DATABASE_URL="postgresql+asyncpg://app:StrongCustomPassword2026!Secure@remote-host:5432/db",
+        BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+    )
+    assert prod_valid.ENVIRONMENT == "production"
+    assert prod_valid.DEBUG is False
+
+
+@pytest.mark.asyncio
+async def test_project_registration_disabled_toggle(async_client: AsyncClient):
+    """Verify that setting PROJECT_REGISTRATION_ENABLED=False rejects public registration."""
+    original_toggle = settings.PROJECT_REGISTRATION_ENABLED
+    settings.PROJECT_REGISTRATION_ENABLED = False
+
+    try:
+        res = await async_client.post(
+            "/api/v1/projects",
+            json={"name": "Forbidden Project"},
+        )
+        assert res.status_code == 403
+        assert "Public project registration is disabled" in res.json()["detail"]
+    finally:
+        settings.PROJECT_REGISTRATION_ENABLED = original_toggle
+
+
+@pytest.mark.asyncio
+async def test_project_registration_rate_limiting(async_client: AsyncClient):
+    """Verify sliding-window rate limiting on POST /api/v1/projects."""
+    rate_limiter.reset()
+    original_limit = settings.RATE_LIMIT_PROJECT_CREATE_PER_MINUTE
+    settings.RATE_LIMIT_PROJECT_CREATE_PER_MINUTE = 2
+    settings.RATE_LIMIT_ENABLED = True
+
+    try:
+        # 1st request -> 201
+        res1 = await async_client.post("/api/v1/projects", json={"name": "Rate Limit Proj 1"})
+        assert res1.status_code == 201
+
+        # 2nd request -> 201
+        res2 = await async_client.post("/api/v1/projects", json={"name": "Rate Limit Proj 2"})
+        assert res2.status_code == 201
+
+        # 3rd request -> 429
+        res3 = await async_client.post("/api/v1/projects", json={"name": "Rate Limit Proj 3"})
+        assert res3.status_code == 429
+        assert "Rate limit exceeded" in res3.json()["detail"]
+    finally:
+        settings.RATE_LIMIT_PROJECT_CREATE_PER_MINUTE = original_limit
+        rate_limiter.reset()

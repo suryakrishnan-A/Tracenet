@@ -68,20 +68,24 @@ POSTGRES_DB=tracenest
 POSTGRES_PORT=5432
 DATABASE_URL=postgresql+asyncpg://tracenest_admin:generate_a_strong_random_password_here_min_32_chars@db:5432/tracenest
 
-# Security & CORS (Replace with your actual production domain)
-ALLOWED_ORIGINS=["https://tracenest.yourdomain.com"]
+# Security & CORS (Replace with your actual production frontend domain)
 BACKEND_CORS_ORIGINS=["https://tracenest.yourdomain.com"]
 
-# Rate Limiting (Sliding Window in-memory)
-RATE_LIMIT_PER_MINUTE=120
+# Rate Limiting & Abuse Prevention
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_TELEMETRY_PER_MINUTE=120
+RATE_LIMIT_INVESTIGATE_PER_MINUTE=15
+RATE_LIMIT_PROJECT_CREATE_PER_MINUTE=10
+PROJECT_REGISTRATION_ENABLED=true
 
-# AI Incident Investigation (Gemini 1.5 Flash recommended)
-GEMINI_API_KEY=your_production_google_gemini_api_key_here
-AI_MODEL_NAME=gemini-1.5-flash
-AI_TEMPERATURE=0.2
+# AI Incident Investigation (OpenAI-compatible or Gemini OpenAI endpoint)
+AI_PROVIDER=openai_compatible
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini
+AI_API_KEY=your_production_api_key_here
 
-# Frontend Configuration
-NEXT_PUBLIC_API_URL=https://tracenest.yourdomain.com
+# Frontend Configuration (Inlined at build time by Next.js)
+NEXT_PUBLIC_API_BASE_URL=https://api-tracenest.yourdomain.com
 ```
 
 ---
@@ -131,7 +135,7 @@ services:
     networks:
       - tracenest-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health/liveness || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 3

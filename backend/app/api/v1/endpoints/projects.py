@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_project
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.project import Project
 from app.schemas.project import (
@@ -45,6 +46,12 @@ async def register_project(
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """Create project and return initial management and ingestion credentials."""
+    if not settings.PROJECT_REGISTRATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public project registration is disabled on this TraceNest instance.",
+        )
+
     project, raw_mgmt_key, raw_ingest_key = await create_project(db, project_in)
     return ProjectResponse(
         id=project.id,

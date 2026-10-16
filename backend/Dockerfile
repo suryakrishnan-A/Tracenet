@@ -51,6 +51,8 @@ COPY --chown=tracenest:tracenest app /app/app
 COPY --chown=tracenest:tracenest migrations /app/migrations
 COPY --chown=tracenest:tracenest alembic.ini /app/alembic.ini
 COPY --chown=tracenest:tracenest pyproject.toml /app/pyproject.toml
+COPY --chown=tracenest:tracenest entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Switch to non-root user
 USER 10001:10001
@@ -68,5 +70,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=20s --timeout=5s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
 
-# Launch production server with multi-worker ASGI
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Launch production server via entrypoint (runs migrations before starting multi-worker Uvicorn)
+ENTRYPOINT ["/app/entrypoint.sh"]

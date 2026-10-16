@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------------
 # Stage 1: Install Dependencies
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN npm ci
 # ------------------------------------------------------------------------------
 # Stage 2: Build Application
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -33,7 +33,7 @@ RUN npm run build
 # ------------------------------------------------------------------------------
 # Stage 3: Minimal Production Runner
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="TraceNest Frontend" \

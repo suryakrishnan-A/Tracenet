@@ -11,6 +11,7 @@ import time
 import uuid
 import re
 import logging
+import hashlib
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -173,6 +174,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         elif path.endswith("/telemetry") and request.method == "POST":
             limit = settings.RATE_LIMIT_TELEMETRY_PER_MINUTE
             rate_key_prefix = "telemetry"
+        elif path.endswith("/projects") and request.method == "POST":
+            limit = settings.RATE_LIMIT_PROJECT_CREATE_PER_MINUTE
+            rate_key_prefix = "project_create"
 
         if limit is not None:
             # Multi-worker partitioning: allocate per-process share of configured ceiling
@@ -181,8 +185,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             # Use authenticated API key hash or client IP as rate limit identity
             api_key = request.headers.get("x-api-key") or request.headers.get("authorization") or ""
-            client_ip = request.client.host if request.client else "unknown"
-            identity = f"{rate_key_prefix}:{hash(api_key) if api_key else client_ip}"
+
+            # Extract client IP, prioritizing X-Forwarded-For if deployed behind reverse proxy
+            forwarded_for = request.headers.get("x-forwarded-for")
+            if forwarded_for:
+                client_ip = forwarded_for.split(",")[0].strip()
+            else:
+                client_ip = request.client.host if request.client else "unknown"
+
+            # Stable, non-reversible keyed identity using SHA-256 (replaces process-salted hash())
+            if api_key:
+                clean_key = api_key.strip()
+                if clean_key.lower().startswith("bearer "):
+                    clean_key = clean_key[7:].strip()
+                stable_key_hash = hashlib.sha256(clean_key.encode("utf-8")).hexdigest()[:16]
+                identity = f"{rate_key_prefix}:{stable_key_hash}"
+            else:
+                identity = f"{rate_key_prefix}:{client_ip}"
 
             allowed, remaining, retry_after = rate_limiter.is_allowed(identity, effective_limit, window_seconds=60)
 

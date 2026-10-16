@@ -12,6 +12,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.main import app
 from app.core.config import settings
+from app.core.middleware import rate_limiter
 from app.db.session import get_db
 
 # Dedicated Test Engine bound to TEST_DATABASE_URL with NullPool to avoid asyncpg connection reuse conflicts
@@ -47,7 +48,9 @@ async def _override_get_db() -> AsyncGenerator[AsyncSession, None]:
 async def isolated_test_database():
     """Ensure database dependencies point to test DB and clean up tables after every test."""
     app.dependency_overrides[get_db] = _override_get_db
+    rate_limiter.reset()
     yield
+    rate_limiter.reset()
     app.dependency_overrides.clear()
     async with test_engine.begin() as conn:
         await conn.execute(
