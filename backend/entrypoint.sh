@@ -1,11 +1,18 @@
 #!/bin/sh
 # TraceNest Production Container Entrypoint
-# Executes pending Alembic migrations before starting multi-worker Uvicorn.
+# Dispatches custom commands (e.g. alembic upgrade head) or launches Uvicorn.
 set -e
 
-echo "[TraceNest] Checking and applying database migrations (alembic upgrade head)..."
-alembic upgrade head
-echo "[TraceNest] Database migrations successfully applied."
+# If arguments are supplied, execute them directly
+if [ "$#" -gt 0 ]; then
+    echo "[TraceNest] Executing custom command: $@"
+    exec "$@"
+fi
 
-echo "[TraceNest] Launching production server..."
-exec uvicorn app.main:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}" --workers "${WORKERS:-2}" --proxy-headers --forwarded-allow-ips "*"
+# Default server networking and worker parameters
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+WORKERS="${WORKERS:-1}"
+
+echo "[TraceNest] Starting TraceNest API server on ${HOST}:${PORT} (workers: ${WORKERS})..."
+exec uvicorn app.main:app --host "${HOST}" --port "${PORT}" --workers "${WORKERS}" --proxy-headers --forwarded-allow-ips "*"
