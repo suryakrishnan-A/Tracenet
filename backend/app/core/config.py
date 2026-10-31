@@ -20,7 +20,12 @@ def normalize_database_url(url: str) -> str:
     if not url:
         return url
 
-    parsed = urlparse(url.strip())
+    cleaned = url.strip()
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+        if len(cleaned) >= 2:
+            cleaned = cleaned[1:-1].strip()
+
+    parsed = urlparse(cleaned)
     scheme = parsed.scheme.lower()
 
     if scheme in ("postgres", "postgresql", "postgresql+psycopg2"):
@@ -178,11 +183,20 @@ class Settings(BaseSettings):
                 "root",
                 "123456",
             }
-            if self.POSTGRES_PASSWORD.lower() in insecure_passwords:
-                raise ValueError("Insecure default database password detected in production configuration. Please configure a secure, unique password.")
             parsed_db = urlparse(self.DATABASE_URL)
-            if parsed_db.password and parsed_db.password.lower() in insecure_passwords:
-                raise ValueError("Insecure default database password detected in DATABASE_URL during production deployment.")
+            db_host = (parsed_db.hostname or "").lower()
+            is_local = db_host in ("localhost", "127.0.0.1", "") or db_host == "postgres"
+
+            if not is_local and parsed_db.password:
+                # Remote managed database: validate password directly from DATABASE_URL
+                if parsed_db.password.lower() in insecure_passwords:
+                    raise ValueError("Insecure default database password detected in DATABASE_URL during production deployment.")
+            else:
+                # Local/legacy database or missing password in DATABASE_URL: enforce strict legacy checks
+                if self.POSTGRES_PASSWORD.lower() in insecure_passwords:
+                    raise ValueError("Insecure default database password detected in production configuration. Please configure a secure, unique password.")
+                if parsed_db.password and parsed_db.password.lower() in insecure_passwords:
+                    raise ValueError("Insecure default database password detected in DATABASE_URL during production deployment.")
         return self
 
 

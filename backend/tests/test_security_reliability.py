@@ -327,27 +327,93 @@ def test_cors_origins_validation_and_production_safeguards():
 
 
 def test_production_secret_validation():
-    """Verify production fails fast on insecure default passwords."""
+    """Verify production fails fast on insecure default passwords while supporting remote DATABASE_URL."""
     from app.core.config import Settings
 
-    # Production rejects default 'postgres' password
-    with pytest.raises(ValueError, match="Insecure default database password detected"):
+    # 1. Production with valid remote DATABASE_URL and default legacy POSTGRES_PASSWORD succeeds
+    prod_remote_default_pw = Settings(
+        ENVIRONMENT="production",
+        DATABASE_URL="postgresql://neondb_owner:StrongNeonProductionSecret2026!@ep-cool-service.us-east-2.aws.neon.tech/neondb?sslmode=require",
+        BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+    )
+    assert prod_remote_default_pw.ENVIRONMENT == "production"
+    assert prod_remote_default_pw.DEBUG is False
+    assert "ssl=require" in prod_remote_default_pw.DATABASE_URL
+
+    # 2. Production with insecure password inside remote DATABASE_URL fails
+    with pytest.raises(ValueError, match="Insecure default database password detected in DATABASE_URL"):
         Settings(
             ENVIRONMENT="production",
-            POSTGRES_PASSWORD="postgres",
-            DATABASE_URL="postgresql+asyncpg://postgres:postgres@remote-host:5432/db",
+            DATABASE_URL="postgresql://neondb_owner:postgres@ep-cool-service.us-east-2.aws.neon.tech/neondb?sslmode=require",
             BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
         )
 
-    # Production accepts strong custom password
-    prod_valid = Settings(
+    with pytest.raises(ValueError, match="Insecure default database password detected in DATABASE_URL"):
+        Settings(
+            ENVIRONMENT="production",
+            DATABASE_URL="postgresql://neondb_owner:password@ep-cool-service.us-east-2.aws.neon.tech/neondb?sslmode=require",
+            BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+        )
+
+    # 3. Production using legacy/local configuration with an insecure password fails
+    with pytest.raises(ValueError, match="Insecure default database password detected in production configuration"):
+        Settings(
+            ENVIRONMENT="production",
+            POSTGRES_PASSWORD="postgres",
+            DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/tracenest",
+            BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+        )
+
+    with pytest.raises(ValueError, match="Insecure default database password detected in production configuration"):
+        Settings(
+            ENVIRONMENT="production",
+            POSTGRES_PASSWORD="postgres",
+            DATABASE_URL="postgresql+asyncpg://tracenest_app:postgres@postgres:5432/tracenest",
+            BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
+        )
+
+    # Production accepts strong custom password for local/legacy configuration
+    prod_valid_legacy = Settings(
         ENVIRONMENT="production",
         POSTGRES_PASSWORD="StrongCustomPassword2026!Secure",
-        DATABASE_URL="postgresql+asyncpg://app:StrongCustomPassword2026!Secure@remote-host:5432/db",
+        DATABASE_URL="postgresql+asyncpg://app:StrongCustomPassword2026!Secure@localhost:5432/db",
         BACKEND_CORS_ORIGINS='["https://app.tracenest.dev"]',
     )
-    assert prod_valid.ENVIRONMENT == "production"
-    assert prod_valid.DEBUG is False
+    assert prod_valid_legacy.ENVIRONMENT == "production"
+
+
+def test_database_url_normalization_quotes_and_ssl():
+    """Verify DATABASE_URL normalization handles quotes, whitespace, and SSL translation."""
+    from app.core.config import normalize_database_url
+
+    raw_neon = "postgresql://neondb_owner:SecretPass123@ep-cool.c-7.us-east-2.aws.neon.tech:5432/neondb?sslmode=require&channel_binding=require"
+    expected = "postgresql+asyncpg://neondb_owner:SecretPass123@ep-cool.c-7.us-east-2.aws.neon.tech:5432/neondb?ssl=require"
+
+    # 1. Clean URL
+    assert normalize_database_url(raw_neon) == expected
+
+    # 2. Surrounding double quotes
+    assert normalize_database_url(f'"{raw_neon}"') == expected
+
+    # 3. Surrounding single quotes
+    assert normalize_database_url(f"'{raw_neon}'") == expected
+
+    # 4. Surrounding whitespace + quotes
+    assert normalize_database_url(f'  "{raw_neon}"  ') == expected
+    assert normalize_database_url(f"  '{raw_neon}'  ") == expected
+
+    # 5. Preserves legitimate internal quote characters in credentials/params
+    with_internal_char = "postgresql://user:p@ss_word!@host:5432/db?sslmode=require"
+    norm_internal = normalize_database_url(with_internal_char)
+    assert "ssl=require" in norm_internal
+    assert "p@ss_word!" in norm_internal
+
+    # 6. sslmode variations mapped to ssl=require and unsupported channel_binding stripped
+    for mode in ("require", "verify-ca", "verify-full", "prefer"):
+        url_mode = f"postgresql://u:p@h:5432/db?sslmode={mode}&channel_binding=require"
+        norm = normalize_database_url(url_mode)
+        assert "ssl=require" in norm
+        assert "channel_binding" not in norm
 
 
 @pytest.mark.asyncio
